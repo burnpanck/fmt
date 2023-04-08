@@ -260,6 +260,14 @@
 #  define FMT_UNICODE !FMT_MSC_VERSION
 #endif
 
+#ifndef _LIBCPP_VERSION
+#define FMT_HAS_WCHAR
+#else
+#ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
+#define FMT_HAS_WCHAR
+#endif
+#endif
+
 #ifndef FMT_CONSTEVAL
 #  if ((FMT_GCC_VERSION >= 1000 || FMT_CLANG_VERSION >= 1101) &&         \
        FMT_CPLUSPLUS >= 202002L && !defined(__apple_build_version__)) || \

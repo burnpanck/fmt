@@ -35,6 +35,7 @@ template FMT_API void vformat_to(buffer<char>&, string_view,
                                  basic_format_args<FMT_BUFFER_CONTEXT(char)>,
                                  locale_ref);
 
+#ifdef FMT_HAS_WCHAR
 // Explicit instantiations for wchar_t.
 
 template FMT_API auto thousands_sep_impl(locale_ref)
@@ -42,6 +43,7 @@ template FMT_API auto thousands_sep_impl(locale_ref)
 template FMT_API auto decimal_point_impl(locale_ref) -> wchar_t;
 
 template FMT_API void buffer<wchar_t>::append(const wchar_t*, const wchar_t*);
+#endif
 
 }  // namespace detail
 FMT_END_NAMESPACE
