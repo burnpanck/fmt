@@ -22,60 +22,6 @@ using wstring_view = fmt::basic_string_view<wchar_t>;
 
 #  include <windows.h>
 
-TEST(util_test, utf16_to_utf8) {
-  auto s = std::string("ёжик");
-  fmt::detail::utf16_to_utf8 u(L"\x0451\x0436\x0438\x043A");
-  EXPECT_EQ(s, u.str());
-  EXPECT_EQ(s.size(), u.size());
-}
-
-TEST(util_test, utf16_to_utf8_empty_string) {
-  std::string s = "";
-  fmt::detail::utf16_to_utf8 u(L"");
-  EXPECT_EQ(s, u.str());
-  EXPECT_EQ(s.size(), u.size());
-}
-
-template <typename Converter, typename Char>
-void check_utf_conversion_error(const char* message,
-                                fmt::basic_string_view<Char> str =
-                                    fmt::basic_string_view<Char>(nullptr, 1)) {
-  fmt::memory_buffer out;
-  fmt::detail::format_windows_error(out, ERROR_INVALID_PARAMETER, message);
-  auto error = std::system_error(std::error_code());
-  try {
-    (Converter)(str);
-  } catch (const std::system_error& e) {
-    error = e;
-  }
-  EXPECT_EQ(ERROR_INVALID_PARAMETER, error.code().value());
-  EXPECT_THAT(error.what(), HasSubstr(fmt::to_string(out)));
-}
-
-TEST(util_test, utf16_to_utf8_error) {
-  check_utf_conversion_error<fmt::detail::utf16_to_utf8, wchar_t>(
-      "cannot convert string from UTF-16 to UTF-8");
-}
-
-TEST(util_test, utf16_to_utf8_convert) {
-  fmt::detail::utf16_to_utf8 u;
-  EXPECT_EQ(ERROR_INVALID_PARAMETER, u.convert(wstring_view(nullptr, 1)));
-  EXPECT_EQ(ERROR_INVALID_PARAMETER,
-            u.convert(wstring_view(L"foo", INT_MAX + 1u)));
-}
-
-TEST(os_test, format_std_error_code) {
-  EXPECT_EQ("generic:42",
-            fmt::format(FMT_STRING("{0}"),
-                        std::error_code(42, std::generic_category())));
-  EXPECT_EQ("system:42",
-            fmt::format(FMT_STRING("{0}"),
-                        std::error_code(42, fmt::system_category())));
-  EXPECT_EQ("system:-42",
-            fmt::format(FMT_STRING("{0}"),
-                        std::error_code(-42, fmt::system_category())));
-}
-
 TEST(os_test, format_windows_error) {
   LPWSTR message = nullptr;
   auto result = FormatMessageW(
@@ -83,7 +29,8 @@ TEST(os_test, format_windows_error) {
           FORMAT_MESSAGE_IGNORE_INSERTS,
       nullptr, ERROR_FILE_EXISTS, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
       reinterpret_cast<LPWSTR>(&message), 0, nullptr);
-  fmt::detail::utf16_to_utf8 utf8_message(wstring_view(message, result - 2));
+  auto utf8_message =
+      fmt::detail::to_utf8<wchar_t>(wstring_view(message, result - 2));
   LocalFree(message);
   fmt::memory_buffer actual_message;
   fmt::detail::format_windows_error(actual_message, ERROR_FILE_EXISTS, "test");
@@ -108,7 +55,8 @@ TEST(os_test, format_long_windows_error) {
     LocalFree(message);
     return;
   }
-  fmt::detail::utf16_to_utf8 utf8_message(wstring_view(message, result - 2));
+  auto utf8_message =
+      fmt::detail::to_utf8<wchar_t>(wstring_view(message, result - 2));
   LocalFree(message);
   fmt::memory_buffer actual_message;
   fmt::detail::format_windows_error(actual_message, provisioning_not_allowed,
@@ -139,13 +87,24 @@ TEST(os_test, report_windows_error) {
                fmt::to_string(out));
 }
 
+#  if FMT_USE_FCNTL && !defined(__MINGW32__)
+TEST(file_test, open_windows_file) {
+  using fmt::file;
+  file out = file::open_windows_file(L"test-file",
+                                     file::WRONLY | file::CREATE | file::TRUNC);
+  out.write("x", 1);
+  file in = file::open_windows_file(L"test-file", file::RDONLY);
+  EXPECT_READ(in, "x");
+}
+#  endif  // FMT_USE_FCNTL && !defined(__MINGW32__)
+
 #endif  // _WIN32
 
 #if FMT_USE_FCNTL
 
 using fmt::file;
 
-bool isclosed(int fd) {
+auto isclosed(int fd) -> bool {
   char buffer;
   auto result = std::streamsize();
   SUPPRESS_ASSERT(result = FMT_POSIX(read(fd, &buffer, 1)));
@@ -153,12 +112,11 @@ bool isclosed(int fd) {
 }
 
 // Opens a file for reading.
-file open_file() {
-  file read_end, write_end;
-  file::pipe(read_end, write_end);
-  write_end.write(file_content, std::strlen(file_content));
-  write_end.close();
-  return read_end;
+auto open_file() -> file {
+  auto pipe = fmt::pipe();
+  pipe.write_end.write(file_content, std::strlen(file_content));
+  pipe.write_end.close();
+  return std::move(pipe.read_end);
 }
 
 // Attempts to write a string to a file.
@@ -294,8 +252,7 @@ TEST(ostream_test, move_while_holding_data) {
 
 TEST(ostream_test, print) {
   fmt::ostream out = fmt::output_file("test-file");
-  out.print("The answer is {}.\n",
-            fmt::join(std::initializer_list<int>{42}, ", "));
+  out.print("The answer is {}.\n", 42);
   out.close();
   file in("test-file", file::RDONLY);
   EXPECT_READ(in, "The answer is 42.\n");
@@ -468,11 +425,10 @@ TEST(file_test, read_error) {
 }
 
 TEST(file_test, write) {
-  file read_end, write_end;
-  file::pipe(read_end, write_end);
-  write(write_end, "test");
-  write_end.close();
-  EXPECT_READ(read_end, "test");
+  auto pipe = fmt::pipe();
+  write(pipe.write_end, "test");
+  pipe.write_end.close();
+  EXPECT_READ(pipe.read_end, "test");
 }
 
 TEST(file_test, write_error) {
@@ -530,18 +486,16 @@ TEST(file_test, dup2_noexcept_error) {
 }
 
 TEST(file_test, pipe) {
-  file read_end, write_end;
-  file::pipe(read_end, write_end);
-  EXPECT_NE(-1, read_end.descriptor());
-  EXPECT_NE(-1, write_end.descriptor());
-  write(write_end, "test");
-  EXPECT_READ(read_end, "test");
+  auto pipe = fmt::pipe();
+  EXPECT_NE(-1, pipe.read_end.descriptor());
+  EXPECT_NE(-1, pipe.write_end.descriptor());
+  write(pipe.write_end, "test");
+  EXPECT_READ(pipe.read_end, "test");
 }
 
 TEST(file_test, fdopen) {
-  file read_end, write_end;
-  file::pipe(read_end, write_end);
-  int read_fd = read_end.descriptor();
-  EXPECT_EQ(read_fd, FMT_POSIX(fileno(read_end.fdopen("r").get())));
+  auto pipe = fmt::pipe();
+  int read_fd = pipe.read_end.descriptor();
+  EXPECT_EQ(read_fd, FMT_POSIX(fileno(pipe.read_end.fdopen("r").get())));
 }
 #endif  // FMT_USE_FCNTL
