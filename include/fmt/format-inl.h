@@ -8,19 +8,19 @@
 #ifndef FMT_FORMAT_INL_H_
 #define FMT_FORMAT_INL_H_
 
-#include <algorithm>
-#include <cerrno>  // errno
-#include <climits>
-#include <cmath>
-#include <cstdarg>
-#include <cstring>  // std::memmove
-#include <exception>
+#ifndef FMT_MODULE
+#  include <algorithm>
+#  include <cerrno>  // errno
+#  include <climits>
+#  include <cmath>
+#  include <exception>
 
-#ifndef FMT_STATIC_THOUSANDS_SEPARATOR
-#  include <locale>
+#  if !defined(FMT_STATIC_THOUSANDS_SEPARATOR)
+#    include <locale>
+#  endif
 #endif
 
-#if defined(_WIN32) && !defined(FMT_WINDOWS_NO_WCHAR)
+#if defined(_WIN32) && !defined(FMT_USE_WRITE_CONSOLE)
 #  include <io.h>  // _isatty
 #endif
 
@@ -1606,14 +1606,21 @@ template <typename F> class fallback_file : public file_base<F> {
   }
 };
 
-template <typename F, FMT_ENABLE_IF(sizeof(F::_p) != 0)>
+#ifndef FMT_USE_FALLBACK_FILE
+#  define FMT_USE_FALLBACK_FILE 1
+#endif
+
+template <typename F,
+          FMT_ENABLE_IF(sizeof(F::_p) != 0 && !FMT_USE_FALLBACK_FILE)>
 auto get_file(F* f, int) -> apple_file<F> {
   return f;
 }
-template <typename F, FMT_ENABLE_IF(sizeof(F::_IO_read_ptr) != 0)>
+template <typename F,
+          FMT_ENABLE_IF(sizeof(F::_IO_read_ptr) != 0 && !FMT_USE_FALLBACK_FILE)>
 inline auto get_file(F* f, int) -> glibc_file<F> {
   return f;
 }
+
 inline auto get_file(FILE* f, ...) -> fallback_file<FILE> { return f; }
 
 using file_ref = decltype(get_file(static_cast<FILE*>(nullptr), 0));
@@ -1651,7 +1658,7 @@ class file_print_buffer : public buffer<char> {
   }
 };
 
-#if !defined(_WIN32) || defined(FMT_WINDOWS_NO_WCHAR)
+#if !defined(_WIN32) || defined(FMT_USE_WRITE_CONSOLE)
 FMT_FUNC auto write_console(int, string_view) -> bool { return false; }
 #else
 using dword = conditional_t<sizeof(long) == 4, unsigned long, unsigned>;
@@ -1677,7 +1684,7 @@ FMT_FUNC void vprint_mojibake(std::FILE* f, string_view fmt, format_args args,
 #endif
 
 FMT_FUNC void print(std::FILE* f, string_view text) {
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(FMT_USE_WRITE_CONSOLE)
   int fd = _fileno(f);
   if (_isatty(fd)) {
     std::fflush(f);
@@ -1688,14 +1695,14 @@ FMT_FUNC void print(std::FILE* f, string_view text) {
 }
 }  // namespace detail
 
-FMT_FUNC void vprint(std::FILE* f, string_view fmt, format_args args) {
+FMT_FUNC void vprint_buffered(std::FILE* f, string_view fmt, format_args args) {
   auto buffer = memory_buffer();
   detail::vformat_to(buffer, fmt, args);
   detail::print(f, {buffer.data(), buffer.size()});
 }
 
-FMT_FUNC void vprint_locked(std::FILE* f, string_view fmt, format_args args) {
-  if (!detail::file_ref(f).is_buffered()) return vprint(f, fmt, args);
+FMT_FUNC void vprint(std::FILE* f, string_view fmt, format_args args) {
+  if (!detail::file_ref(f).is_buffered()) return vprint_buffered(f, fmt, args);
   auto&& buffer = detail::file_print_buffer(f);
   return detail::vformat_to(buffer, fmt, args);
 }
