@@ -1751,6 +1751,7 @@ auto copy_unit(string_view unit, OutputIt out, Char) -> OutputIt {
   return std::copy(unit.begin(), unit.end(), out);
 }
 
+#ifdef FMT_HAS_WCHAR
 template <typename OutputIt>
 auto copy_unit(string_view unit, OutputIt out, wchar_t) -> OutputIt {
   // This works when wchar_t is UTF-32 because units only contain characters
@@ -1758,6 +1759,7 @@ auto copy_unit(string_view unit, OutputIt out, wchar_t) -> OutputIt {
   utf8_to_utf16 u(unit);
   return std::copy(u.c_str(), u.c_str() + u.size(), out);
 }
+#endif
 
 template <typename Char, typename Period, typename OutputIt>
 auto format_duration_unit(OutputIt out) -> OutputIt {
